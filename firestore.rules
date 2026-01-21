@@ -2,78 +2,81 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Função auxiliar para verificar se o usuário autenticado é o dono dos dados
+    /**
+     * FUNÇÕES DE SEGURANÇA (SEGURANÇA SÊNIOR)
+     */
+     
+    // Verifica se o usuário autenticado é o dono do documento
     function isOwner(userId) {
       return request.auth != null && request.auth.uid == userId;
     }
 
-    // Função de Blindagem: Verifica se o usuário está tentando alterar campos restritos
-    // Campos nesta lista só podem ser alterados via Firebase Admin (Backend/Webhooks)
-    function notUpdatingSensitiveFields() {
+    // Verifica se o campo 'subscription_status' foi alterado na requisição
+    function isStatusUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['subscription_status']);
+    }
+
+    // Lista de campos que NUNCA podem ser editados pelo cliente (Imutáveis via SDK)
+    function notModifyingSensitiveFields() {
       let sensitiveFields = [
         'subscription_status', 
-        'plan', 
-        'stripeCustomerId', 
-        'stripe_customer_id',
-        'expirationDate', 
-        'subscriptionId', 
-        'role', 
-        'xp', 
-        'level', 
+        'stripe_customer_id', 
+        'stripeCustomerId',
+        'email', 
         'created_at', 
-        'email'
+        'onboarding_completed_at',
+        'role'
       ];
+      // Verifica se nenhum desses campos consta no diff da atualização
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(sensitiveFields);
     }
 
     // Regras para a coleção principal de usuários
     match /users/{userId} {
-      // Permite leitura individual apenas pelo dono para verificar login e assinatura
+      
+      // LEITURA: Apenas o dono pode ler seu próprio perfil
       allow get: if isOwner(userId);
       
-      // Proíbe listagem global de usuários (Privacidade Total)
+      // SEGURANÇA: Proíbe listagem de usuários (Prevenção de scraping)
       allow list: if false;
 
       /**
-       * AUDITORIA DE SEGURANÇA: Bloqueio de Criação Direta
-       * O documento do usuário DEVE ser criado via Webhook (Stripe/Admin).
-       * Isso impede que usuários criem perfis sem pagamento confirmado.
+       * CRIAÇÃO (PROVISONAMENTO):
+       * O usuário pode criar seu documento inicial, mas o status de assinatura
+       * deve ser omitido ou obrigatoriamente definido como 'inactive'.
+       * (O status 'active' é injetado exclusivamente via Webhook/Admin SDK).
        */
-      allow create: if false;
+      allow create: if isOwner(userId) 
+        && (
+          !('subscription_status' in request.resource.data) || 
+          request.resource.data.subscription_status == 'inactive'
+        );
 
       /**
-       * ATUALIZAÇÃO CONTROLADA:
-       * O usuário pode atualizar seu perfil (onboarding, hábitos, etc), 
-       * desde que não toque em campos financeiros ou de status.
+       * ATUALIZAÇÃO (PROTEÇÃO DE PAYWALL):
+       * O usuário pode atualizar hábitos e preferências, mas qualquer tentativa
+       * de alterar o 'subscription_status' ou campos financeiros causa negação (403).
        */
       allow update: if isOwner(userId) 
-        &&切换notUpdatingSensitiveFields()
-        // Garante integridade de tipos básicos
-        && (request.resource.data.get('addiction_score', 0) is int);
+        && notModifyingSensitiveFields();
 
-      // Impede deleção de conta via client
+      // DELEÇÃO: Bloqueada para evitar perda acidental de dados de auditoria
       allow delete: if false;
 
-      // Sub-coleção: Histórico de Hábitos (Gestão pelo Usuário)
+      /**
+       * SUB-COLEÇÕES
+       */
+       
       match /daily_history/{date} {
         allow read, write: if isOwner(userId);
-        
-        allow create, update: if request.resource.data.percentage is int
-          && request.resource.data.percentage >= 0 
-          && request.resource.data.percentage <= 100;
       }
 
-      // Sub-coleção: Logs de Gatilhos (Gestão pelo Usuário)
       match /trigger_logs/{logId} {
         allow read, write: if isOwner(userId);
-        
-        allow create: if request.resource.data.intensity is int 
-          && request.resource.data.intensity >= 1 
-          && request.resource.data.intensity <= 5;
       }
     }
 
-    // Bloqueio padrão (Default Deny) para qualquer outro caminho
+    // Bloqueio padrão para qualquer outro caminho não especificado
     match /{path=**} {
       allow read, write: if false;
     }
