@@ -23,8 +23,9 @@ if (!admin.apps.length) {
   }
 }
 
+// Fix: Updated apiVersion to match the expected type '2025-12-15.clover'
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  apiVersion: '2025-02-24.acacia',
+  apiVersion: '2025-12-15.clover' as any,
 });
 
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -33,7 +34,8 @@ const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
  * Captura o corpo bruto da requisição (Buffer) necessário para o Stripe
  */
 async function getRawBody(readable: VercelRequest): Promise<any> {
-  const chunks = [];
+  // Correção do erro TS2345: Definindo explicitamente como any[] em vez de inferência implícita de never[]
+  const chunks: any[] = [];
   for await (const chunk of (readable as any)) {
     chunks.push(typeof chunk === 'string' ? (globalThis as any).Buffer.from(chunk) : chunk);
   }
