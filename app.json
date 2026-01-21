@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "SCAR-D",
+    "slug": "scar-d",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#000000",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.scard.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "package": "com.scard.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "name": "SCAR-D",
+      "shortName": "SCAR-D",
+      "lang": "pt-BR",
+      "display": "standalone",
+      "backgroundColor": "#000000",
+      "themeColor": "#000000",
+      "startUrl": "/",
+      "scope": "/",
+      "orientation": "portrait",
+      "meta": {
+        "apple-mobile-web-app-status-bar-style": "black-translucent",
+        "apple-mobile-web-app-capable": "yes"
+      }
+    }
+  }
+}

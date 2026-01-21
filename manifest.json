@@ -1,0 +1,21 @@
+{
+  "name": "DSVC",
+  "short_name": "DSVC",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://i.imgur.com/nyLkCgz.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://i.imgur.com/j9b02I4.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}
