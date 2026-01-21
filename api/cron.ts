@@ -1,3 +1,4 @@
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import * as admin from 'firebase-admin';
 
@@ -16,6 +17,17 @@ if (!admin.apps.length) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  /**
+   * SECURITY GUARD (PROTEÇÃO VERCEL CRON)
+   * Verifica se a requisição possui o token de autorização secreto.
+   * A Vercel envia automaticamente "Bearer <CRON_SECRET>" em jobs agendados.
+   */
+  const authHeader = req.headers.authorization;
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    console.warn(`[Security] Tentativa de acesso não autorizado bloqueada.`);
+    return res.status(401).end('Unauthorized');
+  }
+
   const db = admin.firestore();
   const messaging = admin.messaging();
   const now = new Date();
@@ -82,7 +94,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           // --- MODO SIMULAÇÃO (SEGURANÇA) ---
           console.log(`[SIMULAÇÃO] Notificação seria enviada para: ${userId} - Envio bloqueado por segurança.`);
           results.simulated++;
-          // Em simulação, não atualizamos o 'last_notification_sent_at' para não quebrar a lógica da produção real
         }
       }
     });
