@@ -15,38 +15,50 @@ export const config = {
 
 /**
  * Inicialização Robusta do Firebase Admin (Padrão Modular)
- * Resolve o erro 'Cannot read properties of undefined (reading 'length')' comum em ESM/Vercel.
+ * Corrige o SyntaxError causado por caracteres de controle inválidos no JSON literal.
  */
 function initFirebaseAdmin() {
-  // Verifica se já existem apps inicializados usando a API modular
   if (getApps().length > 0) return;
 
   const serviceAccountRaw = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (!serviceAccountRaw) {
-    console.error('ERRO: FIREBASE_SERVICE_ACCOUNT não definida nas variáveis de ambiente.');
+    console.error('ERRO: FIREBASE_SERVICE_ACCOUNT não definida.');
     return;
   }
 
   try {
-    // Corrige quebras de linha que costumam quebrar o JSON em env vars (especialmente chaves privadas)
-    const formattedJson = serviceAccountRaw.replace(/\\n/g, '\n');
-    const serviceAccount = JSON.parse(formattedJson);
+    /**
+     * Tenta o parse direto. 
+     * O erro "Bad control character" ocorria porque o .replace(/\\n/g, '\n')
+     * injetava quebras de linha REAIS dentro da string JSON, o que é proibido.
+     * O JSON.parse nativo sabe lidar com "\n" (literal) se estiver dentro de uma string.
+     */
+    const serviceAccount = JSON.parse(serviceAccountRaw);
     
-    // Inicialização modular
     initializeApp({
       credential: cert(serviceAccount),
     });
     
-    console.log('[Firebase] Admin inicializado com sucesso via Modular API.');
+    console.log('[Firebase] Admin inicializado com sucesso.');
   } catch (error: any) {
-    console.error('FALHA CRÍTICA: Erro ao processar JSON das credenciais do Firebase:', error.message);
+    console.error('[Firebase Init Error] Falha no parse primário:', error.message);
+    
+    // Fallback apenas para limpeza de espaços ou aspas sujas se o primeiro falhar
+    try {
+      const sanitized = serviceAccountRaw.trim();
+      const serviceAccount = JSON.parse(sanitized);
+      initializeApp({ credential: cert(serviceAccount) });
+      console.log('[Firebase] Admin inicializado via fallback sanitizado.');
+    } catch (fallbackError: any) {
+      console.error('FALHA CRÍTICA: Credenciais do Firebase inválidas:', fallbackError.message);
+    }
   }
 }
 
-// Executa a inicialização no escopo global da função serverless
+// Inicializa o Firebase
 initFirebaseAdmin();
 
-// Inicialização do Stripe (Deixa a versão automática para maior estabilidade)
+// Inicialização do Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
   typescript: true,
 });
@@ -73,13 +85,12 @@ async function syncSubscription(email: string, status: string, customerId?: stri
   let uid: string;
 
   try {
-    // 1. Localiza ou Cria o Usuário no Firebase Auth
     try {
       const userRecord = await auth.getUserByEmail(email);
       uid = userRecord.uid;
     } catch (err: any) {
       if (err.code === 'auth/user-not-found') {
-        console.log(`[Webhook] Provisionando novo usuário no Auth: ${email}`);
+        console.log(`[Webhook] Provisionando novo usuário: ${email}`);
         const newUser = await auth.createUser({
           email,
           emailVerified: true,
@@ -90,7 +101,6 @@ async function syncSubscription(email: string, status: string, customerId?: stri
       }
     }
 
-    // 2. Atualiza o Firestore (Merge garante não perder dados do onboarding)
     const updateData: any = {
       subscription_status: status,
       updated_at: FieldValue.serverTimestamp(),
@@ -102,7 +112,7 @@ async function syncSubscription(email: string, status: string, customerId?: stri
     }
 
     await db.collection('users').doc(uid).set(updateData, { merge: true });
-    console.log(`[Success] ${email} -> status sincronizado: ${status}`);
+    console.log(`[Success] ${email} -> status: ${status}`);
     return true;
   } catch (error) {
     console.error(`[Error Sync] Falha ao sincronizar ${email}:`, error);
@@ -111,7 +121,7 @@ async function syncSubscription(email: string, status: string, customerId?: stri
 }
 
 /**
- * HANDLER PRINCIPAL (Endpoint: api/webhook)
+ * HANDLER PRINCIPAL
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -131,7 +141,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // Processamento dos Eventos do Stripe
   try {
     switch (event.type) {
       case 'checkout.session.completed':
@@ -156,8 +165,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case 'customer.subscription.deleted': {
         const sub = event.data.object as Stripe.Subscription;
         const status = event.type === 'customer.subscription.deleted' ? 'canceled' : sub.status;
-        
-        // Recupera o cliente para extrair o e-mail
         const customer = await stripe.customers.retrieve(sub.customer as string) as Stripe.Customer;
         if (customer.email) {
           await syncSubscription(customer.email, status, customer.id);
