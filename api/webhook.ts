@@ -1,49 +1,69 @@
+
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import Stripe from 'stripe';
 import * as admin from 'firebase-admin';
+// Fix: Explicitly import Buffer from 'buffer' to resolve TS missing global Buffer errors
+import { Buffer } from 'buffer';
 
-// 1. Configuração da API Vercel: Desativa o parse automático para validar a assinatura do Stripe
+// 1. CONFIGURAÇÃO VERCEL: Desativa o bodyParser para validação de assinatura do Stripe
 export const config = {
   api: {
     bodyParser: false,
   },
 };
 
-// 2. Inicialização Segura do Firebase Admin
-if (!admin.apps.length) {
+/**
+ * Inicialização Robusta do Firebase Admin
+ * Trata o JSON das credenciais e corrige quebras de linha comuns em variáveis de ambiente.
+ */
+function initFirebaseAdmin() {
+  if (admin.apps.length > 0) return;
+
+  const serviceAccountRaw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!serviceAccountRaw) {
+    console.error('ERRO: FIREBASE_SERVICE_ACCOUNT não definida.');
+    return;
+  }
+
   try {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
-    if (serviceAccount.project_id) {
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-      });
-    }
-  } catch (error) {
-    console.error('Erro ao inicializar Firebase Admin no Webhook:', error);
+    // Corrige quebras de linha que costumam quebrar o JSON em env vars
+    const formattedJson = serviceAccountRaw.replace(/\\n/g, '\n');
+    const serviceAccount = JSON.parse(formattedJson);
+    
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+    console.log('[Firebase] Admin inicializado com sucesso.');
+  } catch (error: any) {
+    console.error('FALHA CRÍTICA: Erro ao processar JSON das credenciais do Firebase:', error.message);
   }
 }
 
-// Fix: Updated apiVersion to match the expected type '2025-12-15.clover'
+// Inicializa o Firebase
+initFirebaseAdmin();
+
+// Inicialização do Stripe (Versão automática e tipagem ativa)
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  apiVersion: '2025-12-15.clover' as any,
+  typescript: true,
 });
 
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 
 /**
- * Captura o corpo bruto da requisição (Buffer) necessário para o Stripe
+ * Captura o buffer bruto da requisição para validação do Stripe
  */
-async function getRawBody(readable: VercelRequest): Promise<any> {
-  // Correção do erro TS2345: Definindo explicitamente como any[] em vez de inferência implícita de never[]
+async function getRawBody(readable: VercelRequest): Promise<Buffer> {
   const chunks: any[] = [];
   for await (const chunk of (readable as any)) {
-    chunks.push(typeof chunk === 'string' ? (globalThis as any).Buffer.from(chunk) : chunk);
+    // Fix: Using Buffer.from to collect chunks
+    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
   }
-  return (globalThis as any).Buffer.concat(chunks);
+  // Fix: Using Buffer.concat to merge collected chunks
+  return Buffer.concat(chunks);
 }
 
 /**
- * Sincroniza o status da assinatura e cria usuário se necessário
+ * Sincroniza o status da assinatura entre Stripe e Firebase
  */
 async function syncSubscription(email: string, status: string, customerId?: string) {
   const auth = admin.auth();
@@ -51,15 +71,15 @@ async function syncSubscription(email: string, status: string, customerId?: stri
   let uid: string;
 
   try {
-    // Busca ou Provisiona o usuário
+    // 1. Localiza ou Cria o Usuário no Firebase Auth
     try {
       const userRecord = await auth.getUserByEmail(email);
       uid = userRecord.uid;
     } catch (err: any) {
       if (err.code === 'auth/user-not-found') {
-        console.log(`[Webhook] Criando conta para novo cliente: ${email}`);
+        console.log(`[Webhook] Provisionando novo usuário: ${email}`);
         const newUser = await auth.createUser({
-          email: email,
+          email,
           emailVerified: true,
         });
         uid = newUser.uid;
@@ -68,7 +88,7 @@ async function syncSubscription(email: string, status: string, customerId?: stri
       }
     }
 
-    // Prepara dados para o Firestore
+    // 2. Atualiza o Firestore (Merge garante não perder dados do onboarding)
     const updateData: any = {
       subscription_status: status,
       updated_at: admin.firestore.FieldValue.serverTimestamp(),
@@ -79,23 +99,20 @@ async function syncSubscription(email: string, status: string, customerId?: stri
       updateData.stripe_customer_id = customerId;
     }
 
-    // Salva com merge: true para não sobrescrever dados de perfil (onboarding)
     await db.collection('users').doc(uid).set(updateData, { merge: true });
-    console.log(`[Webhook] Sincronização concluída para ${email}: ${status}`);
-    
+    console.log(`[Success] ${email} -> status: ${status}`);
     return true;
   } catch (error) {
-    console.error(`[Webhook] Erro ao sincronizar status para ${email}:`, error);
+    console.error(`[Error Sync] Falha ao sincronizar ${email}:`, error);
     return false;
   }
 }
 
 /**
- * Handler Principal (Vercel Style)
+ * HANDLER PRINCIPAL (Endpoint: api/webhook)
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
     return res.status(405).end('Method Not Allowed');
   }
 
@@ -105,14 +122,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let event: Stripe.Event;
 
   try {
-    if (!sig || !endpointSecret) throw new Error('Missing Signature or Webhook Secret');
+    if (!sig || !endpointSecret) throw new Error('Missing Stripe Signature or Secret');
     event = stripe.webhooks.constructEvent(rawBody, sig, endpointSecret);
   } catch (err: any) {
-    console.error(`❌ Erro na assinatura do Stripe: ${err.message}`);
+    console.error(`[Security] Webhook Signature Verification Failed: ${err.message}`);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // 3. Processamento de Eventos (Lógica de Negócios)
+  // Processamento dos Eventos do Stripe
   try {
     switch (event.type) {
       case 'checkout.session.completed':
@@ -133,32 +150,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         break;
       }
 
-      case 'customer.subscription.updated': {
-        const subscription = event.data.object as Stripe.Subscription;
-        // Buscamos o cliente para obter o e-mail atualizado
-        const customer = await stripe.customers.retrieve(subscription.customer as string) as Stripe.Customer;
-        if (customer.email) {
-          await syncSubscription(customer.email, subscription.status, subscription.customer as string);
-        }
-        break;
-      }
-
+      case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
-        const subscription = event.data.object as Stripe.Subscription;
-        const customer = await stripe.customers.retrieve(subscription.customer as string) as Stripe.Customer;
+        const sub = event.data.object as Stripe.Subscription;
+        const status = event.type === 'customer.subscription.deleted' ? 'canceled' : sub.status;
+        
+        // Busca o cliente para garantir o e-mail correto
+        const customer = await stripe.customers.retrieve(sub.customer as string) as Stripe.Customer;
         if (customer.email) {
-          await syncSubscription(customer.email, 'canceled');
+          await syncSubscription(customer.email, status, customer.id);
         }
         break;
       }
 
       default:
-        console.log(`[Webhook] Evento ignorado: ${event.type}`);
+        console.log(`[Info] Evento recebido e ignorado: ${event.type}`);
     }
 
     return res.status(200).json({ received: true });
-  } catch (err) {
-    console.error('[Webhook] Erro no processamento interno:', err);
+  } catch (error) {
+    console.error('[Fatal] Internal Webhook Error:', error);
     return res.status(500).json({ error: 'Internal Server Error' });
   }
 }
