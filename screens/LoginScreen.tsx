@@ -199,7 +199,7 @@ export const LoginScreen: React.FC = () => {
                           </div>
                         )}
                         <div className="space-y-1">
-                          <label className="text-xs font-medium ml-1 text-gray-500">E-mail</label>
+                          <label className="text-xs font-medium ml-1 text-gray-500">E-mail que realizou o pagamento</label>
                           <div className="flex items-center rounded-xl px-4 py-3.5 bg-[#0F0A15] border border-[#2E243D] focus-within:ring-1 focus-within:ring-violet-500 transition-all">
                             <input 
                               type="email" 
