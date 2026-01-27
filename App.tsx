@@ -1,5 +1,6 @@
+
 import React, { useEffect, useState } from 'react';
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from './lib/firebase';
@@ -18,6 +19,40 @@ import { SupportScreen } from './screens/SupportScreen';
 import { TabLayout } from './components/TabLayout';
 import { Routes as AppRoutes } from './types';
 import { NotificationManager } from './components/NotificationManager';
+
+const AppContent: React.FC<{ user: any }> = ({ user }) => {
+  const location = useLocation();
+
+  return (
+    <div key={location.pathname} className="animate-page-transition w-full flex-1 flex flex-col overflow-hidden">
+      <Routes location={location}>
+        <Route 
+          path={AppRoutes.LOGIN} 
+          element={user ? <Navigate to={AppRoutes.DASHBOARD} replace /> : <LoginScreen />} 
+        />
+        <Route 
+          path={AppRoutes.SUPPORT} 
+          element={<SupportScreen />} 
+        />
+        <Route 
+          path={AppRoutes.ONBOARDING} 
+          element={user ? <OnboardingScreen /> : <Navigate to={AppRoutes.LOGIN} replace />} 
+        />
+        <Route element={user ? <TabLayout /> : <Navigate to={AppRoutes.LOGIN} replace />}>
+          <Route path={AppRoutes.DASHBOARD} element={<DashboardScreen />} />
+          <Route path={AppRoutes.PROGRESS} element={<ProgressScreen />} />
+          <Route path={AppRoutes.LEARNING} element={<LearningScreen />} />
+          <Route path={AppRoutes.PROFILE} element={<ProfileScreen />} />
+        </Route>
+        <Route 
+          path={AppRoutes.SOS} 
+          element={user ? <SosScreen /> : <Navigate to={AppRoutes.LOGIN} replace />} 
+        />
+        <Route path="*" element={<Navigate to={AppRoutes.LOGIN} replace />} />
+      </Routes>
+    </div>
+  );
+};
 
 const App: React.FC = () => {
   const [user, setUser] = useState<any>(null);
@@ -120,31 +155,7 @@ const App: React.FC = () => {
   return (
     <HashRouter>
       <NotificationManager />
-      <Routes>
-        <Route 
-          path={AppRoutes.LOGIN} 
-          element={user ? <Navigate to={AppRoutes.DASHBOARD} replace /> : <LoginScreen />} 
-        />
-        <Route 
-          path={AppRoutes.SUPPORT} 
-          element={<SupportScreen />} 
-        />
-        <Route 
-          path={AppRoutes.ONBOARDING} 
-          element={user ? <OnboardingScreen /> : <Navigate to={AppRoutes.LOGIN} replace />} 
-        />
-        <Route element={user ? <TabLayout /> : <Navigate to={AppRoutes.LOGIN} replace />}>
-          <Route path={AppRoutes.DASHBOARD} element={<DashboardScreen />} />
-          <Route path={AppRoutes.PROGRESS} element={<ProgressScreen />} />
-          <Route path={AppRoutes.LEARNING} element={<LearningScreen />} />
-          <Route path={AppRoutes.PROFILE} element={<ProfileScreen />} />
-        </Route>
-        <Route 
-          path={AppRoutes.SOS} 
-          element={user ? <SosScreen /> : <Navigate to={AppRoutes.LOGIN} replace />} 
-        />
-        <Route path="*" element={<Navigate to={AppRoutes.LOGIN} replace />} />
-      </Routes>
+      <AppContent user={user} />
     </HashRouter>
   );
 };

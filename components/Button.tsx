@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { COLORS } from '../types';
 
@@ -36,7 +37,8 @@ export const Button: React.FC<ButtonProps> = ({
   return (
     <button
       className={`
-        relative overflow-hidden font-semibold py-3.5 px-4 rounded-xl transition-all active:scale-[0.98] active:opacity-90
+        relative overflow-hidden font-semibold py-3.5 px-4 rounded-xl 
+        transform active:scale-95 transition-all duration-100 ease-in-out
         disabled:opacity-50 disabled:cursor-not-allowed
         ${fullWidth ? 'w-full' : 'w-auto'}
         ${borderClass}
