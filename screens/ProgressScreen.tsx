@@ -10,16 +10,16 @@ import { COLORS } from '../types';
 interface DailyHistory {
   date: string;
   percentage: number;
-  completed_count?: number; // Added for precise calculation
-  total_habits?: number;    // Added for precise calculation
+  completed_count?: number; 
+  total_habits?: number;    
 }
 
 interface ChartDataPoint {
-  label: string;      // "D1", "D50"
-  fullDate: string;   // "2023-11-05"
-  value: number;      // 0-100 (Calculated Percentage)
-  count: number;      // Raw count (0-6)
-  dayNumber: number;  // The raw day number
+  label: string;      
+  fullDate: string;   
+  value: number;      
+  count: number;      
+  dayNumber: number;  
 }
 
 interface Stats {
@@ -27,7 +27,6 @@ interface Stats {
   perfectDays: number;
 }
 
-// Insight Data Type
 interface TriggerInsight {
   totalLogs: number;
   topEmotion: { name: string; count: number; percentage: number } | null;
@@ -36,36 +35,55 @@ interface TriggerInsight {
 }
 
 const RANGES = [7, 15, 30, 90];
+const CACHE_DURATION = 60 * 60 * 1000; // 60 minutos
 
 export const ProgressScreen: React.FC = () => {
   const [selectedRange, setSelectedRange] = useState(7);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [stats, setStats] = useState<Stats>({ average: 0, perfectDays: 0 });
   const [triggerInsight, setTriggerInsight] = useState<TriggerInsight | null>(null);
   
-  // Ref for the horizontal scroll container
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // --- DATA LOGIC ---
-
-  // Helper: Format date to YYYY-MM-DD (local time)
   const formatDateKey = (date: Date) => {
     return date.toLocaleDateString('en-CA');
   };
 
-  const fetchData = async () => {
+  const fetchData = async (force = false) => {
     const user = auth.currentUser;
     if (!user) return;
     
+    const cacheKey = `@progress_data_${selectedRange}`;
+    
+    // 1. Verificação de Cache
+    if (!force) {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        try {
+          const { timestamp, data } = JSON.parse(cached);
+          if (Date.now() - timestamp < CACHE_DURATION) {
+            setChartData(data.chartData);
+            setStats(data.stats);
+            setTriggerInsight(data.triggerInsight);
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.error("Cache corrupted:", e);
+        }
+      }
+    }
+
     setLoading(true);
+    if (force) setIsRefreshing(true);
 
     try {
-      // 1. Fetch User Profile to get Start Date
       const userDocRef = doc(db, "users", user.uid);
       const userDocSnap = await getDoc(userDocRef);
       
-      let startDate = new Date(); // Fallback to today
+      let startDate = new Date();
       if (userDocSnap.exists()) {
         const userData = userDocSnap.data();
         if (userData.current_streak_start) {
@@ -74,29 +92,39 @@ export const ProgressScreen: React.FC = () => {
       }
       startDate.setHours(0, 0, 0, 0);
 
-      // 2. Determine Query Range
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const queryStartDate = new Date(today);
       queryStartDate.setDate(today.getDate() - (selectedRange - 1));
       const queryStartDateStr = formatDateKey(queryStartDate);
 
-      // 3. Parallel Fetching: History AND Triggers
       const historyPromise = fetchHistory(user.uid, queryStartDateStr, startDate, today);
       const triggersPromise = getTriggers(user.uid, queryStartDateStr);
 
       const [historyResults, triggerLogs] = await Promise.all([historyPromise, triggersPromise]);
+      const processedInsights = processTriggerInsights(triggerLogs);
 
+      // Atualiza Estados
       setChartData(historyResults.processedData);
       setStats(historyResults.newStats);
-      
-      // 4. Process Trigger Logic
-      processTriggerInsights(triggerLogs);
+      setTriggerInsight(processedInsights);
+
+      // 2. Grava no Cache
+      const cachePayload = {
+        timestamp: Date.now(),
+        data: {
+          chartData: historyResults.processedData,
+          stats: historyResults.newStats,
+          triggerInsight: processedInsights
+        }
+      };
+      localStorage.setItem(cacheKey, JSON.stringify(cachePayload));
 
     } catch (error) {
       console.error("Error fetching progress data:", error);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -133,12 +161,8 @@ export const ProgressScreen: React.FC = () => {
       if (dayNumber < 1) continue; 
 
       const record = historyMap.get(dateKey);
-
-      // --- CRITICAL FIX: CALCULATE PERCENTAGE BASED ON COUNT ---
       const count = record?.completed_count ?? 0;
-      const totalTasks = record?.total_habits || 6; // Default to 6 if undefined
-      
-      // Math: (3 / 6) * 100 = 50%
+      const totalTasks = record?.total_habits || 6; 
       const rawPercentage = (count / totalTasks) * 100;
       const value = Math.min(Math.round(rawPercentage), 100);
 
@@ -164,52 +188,46 @@ export const ProgressScreen: React.FC = () => {
     };
   };
 
-  const processTriggerInsights = (logs: TriggerLog[]) => {
+  const processTriggerInsights = (logs: TriggerLog[]): TriggerInsight => {
     if (logs.length === 0) {
-      setTriggerInsight({ totalLogs: 0, topEmotion: null, topContext: null, ranking: [] });
-      return;
+      return { totalLogs: 0, topEmotion: null, topContext: null, ranking: [] };
     }
 
     const emotionCounts: Record<string, number> = {};
     const contextCounts: Record<string, number> = {};
     
-    // Aggregate
     logs.forEach(log => {
       emotionCounts[log.emotion] = (emotionCounts[log.emotion] || 0) + 1;
       contextCounts[log.context] = (contextCounts[log.context] || 0) + 1;
     });
 
-    // Find Top Emotion
     let maxEmotion = { name: '', count: 0 };
     Object.entries(emotionCounts).forEach(([name, count]) => {
       if (count > maxEmotion.count) maxEmotion = { name, count };
     });
 
-    // Find Top Context
     let maxContext = { name: '', count: 0 };
     Object.entries(contextCounts).forEach(([name, count]) => {
       if (count > maxContext.count) maxContext = { name, count };
     });
 
-    // Create Ranking (Combined simple list)
     const ranking = Object.entries(emotionCounts)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 3);
 
-    setTriggerInsight({
+    return {
       totalLogs: logs.length,
       topEmotion: { ...maxEmotion, percentage: Math.round((maxEmotion.count / logs.length) * 100) },
       topContext: { ...maxContext, percentage: Math.round((maxContext.count / logs.length) * 100) },
       ranking
-    });
+    };
   };
 
   useEffect(() => {
     fetchData();
   }, [selectedRange]);
 
-  // Auto-scroll logic
   useEffect(() => {
     if (!loading && scrollRef.current) {
       setTimeout(() => {
@@ -220,37 +238,44 @@ export const ProgressScreen: React.FC = () => {
     }
   }, [loading, chartData]);
 
-  // --- RENDER HELPERS ---
   const getBarWidthClass = () => {
     if (selectedRange === 7) return "w-8"; 
-    if (selectedRange === 15) return "w-4"; // CORREÇÃO: Reduzido de w-8 para w-4 (15 dias agora é compacto)
+    if (selectedRange === 15) return "w-4";
     if (selectedRange === 30) return "w-4"; 
     return "w-3"; 
   };
 
   return (
     <Wrapper noPadding>
-      {/* 
-        CONTAINER DE SCROLL VERTICAL (Viewport)
-      */}
       <div className="flex-1 w-full h-full overflow-y-auto scrollbar-hide bg-black">
-        
-        {/* 
-          CONTAINER DE CONTEÚDO
-        */}
         <div className="w-full max-w-full px-5 pt-6 pb-32 flex flex-col">
           
-          {/* HEADER */}
-          <div className="flex flex-col mb-6">
-             <h1 className="text-xl font-bold text-white tracking-wide">
-               Evolução & Análise
-             </h1>
-             <p className="text-xs" style={{ color: COLORS.TextSecondary }}>
-               Sua jornada dia após dia
-             </p>
+          <div className="flex justify-between items-start mb-6">
+             <div className="flex flex-col">
+                <h1 className="text-xl font-bold text-white tracking-wide">
+                  Evolução & Análise
+                </h1>
+                <p className="text-xs" style={{ color: COLORS.TextSecondary }}>
+                  Sua jornada dia após dia
+                </p>
+             </div>
+             
+             <button 
+                onClick={() => fetchData(true)}
+                disabled={isRefreshing || loading}
+                className={`p-2 rounded-lg bg-[#1F2937]/50 border border-[#2E243D] transition-all active:scale-90 ${isRefreshing ? 'opacity-50' : ''}`}
+             >
+                <svg 
+                  className={`w-4 h-4 text-gray-400 ${isRefreshing ? 'animate-spin' : ''}`} 
+                  fill="none" 
+                  viewBox="0 0 24 24" 
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+             </button>
           </div>
 
-          {/* RANGE SELECTOR (TABS) */}
           <div className="w-full flex p-1 rounded-xl mb-6 bg-[#1F2937]/30 border border-[#2E243D]">
             {RANGES.map((range) => (
               <button
@@ -267,7 +292,6 @@ export const ProgressScreen: React.FC = () => {
             ))}
           </div>
 
-          {/* KPI CARDS */}
           <div className="grid grid-cols-2 gap-4 mb-8 w-full">
             <div className="p-4 rounded-xl border border-[#2E243D] bg-[#0F0A15] flex flex-col items-center justify-center relative overflow-hidden w-full">
               <span className="text-[10px] uppercase font-bold text-gray-500 mb-1 z-10">Média</span>
@@ -286,7 +310,6 @@ export const ProgressScreen: React.FC = () => {
             </div>
           </div>
 
-          {/* CHART CONTAINER */}
           <div className="w-full flex flex-col mb-10">
             <h3 className="text-xs font-bold text-gray-400 mb-4 uppercase tracking-wider">
               Linha do Tempo
@@ -302,7 +325,6 @@ export const ProgressScreen: React.FC = () => {
                  <p className="text-xs text-gray-400">Complete seus hábitos hoje para ver o D1.</p>
               </div>
             ) : (
-              // Scroll Horizontal condicional: Fixo para 15 e 30 dias para evitar arraste lateral desnecessário
               <div 
                 ref={scrollRef}
                 className={`w-full ${selectedRange === 15 || selectedRange === 30 ? 'overflow-x-hidden' : 'overflow-x-auto'} pb-4 scrollbar-hide`}
@@ -311,7 +333,6 @@ export const ProgressScreen: React.FC = () => {
                   className={`flex items-end min-w-full ${selectedRange === 15 || selectedRange === 30 ? 'justify-between px-0' : 'gap-3 px-2'} border-b border-[#2E243D] relative`}
                   style={{ height: '200px' }} 
                 >
-                  {/* Background Grid Lines */}
                   <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-10 w-full h-full z-0">
                     <div className="w-full h-px bg-white"></div>
                     <div className="w-full h-px bg-white"></div>
@@ -351,7 +372,6 @@ export const ProgressScreen: React.FC = () => {
             )}
           </div>
 
-          {/* RAIO-X DOS GATILHOS */}
           <div className="w-full flex flex-col">
             <div className="flex items-center gap-2 mb-4">
               <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -364,7 +384,6 @@ export const ProgressScreen: React.FC = () => {
 
             {!loading && triggerInsight && triggerInsight.totalLogs > 0 ? (
               <div className="flex flex-col gap-4 w-full">
-                {/* Main Alert Card */}
                 <div className="p-5 rounded-2xl bg-gradient-to-br from-[#1F1212] to-[#000000] border border-red-900/30 relative overflow-hidden w-full">
                   <div className="absolute top-0 right-0 p-3 opacity-10">
                     <svg className="w-24 h-24 text-red-600" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
@@ -379,7 +398,6 @@ export const ProgressScreen: React.FC = () => {
                   </p>
                 </div>
 
-                {/* Ranking List */}
                 <div className="bg-[#0F0A15] rounded-xl border border-[#2E243D] p-4 w-full">
                   <h5 className="text-[10px] uppercase text-gray-500 font-bold mb-3">Top Gatilhos Recorrentes</h5>
                   <div className="flex flex-col gap-3 w-full">

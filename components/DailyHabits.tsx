@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
@@ -7,7 +8,6 @@ interface DailyHabitsProps {
   profile: UserProfile | null;
 }
 
-// Fallback para usuários antigos que não escolheram hábitos
 const DEFAULT_HABIT_IDS = ['meditacao', 'musculacao', 'leitura', 'banho_gelado', 'sono', 'sol'];
 
 export const DailyHabits: React.FC<DailyHabitsProps> = ({ profile }) => {
@@ -20,7 +20,6 @@ export const DailyHabits: React.FC<DailyHabitsProps> = ({ profile }) => {
   const todayDate = getTodayDateKey();
   const STORAGE_KEY = `@habits_${todayDate}`;
 
-  // Lista efetiva de hábitos (dinâmica)
   const displayHabits = React.useMemo(() => {
     const ids = profile?.selected_habits || DEFAULT_HABIT_IDS;
     return MASTER_HABITS.filter(h => ids.includes(h.id));
@@ -67,15 +66,22 @@ export const DailyHabits: React.FC<DailyHabitsProps> = ({ profile }) => {
     setCompletedIds(prev => {
       const isCompleted = prev.includes(id);
       let newHabits = isCompleted ? prev.filter(item => item !== id) : [...prev, id];
+      
+      // Salva localmente
       localStorage.setItem(STORAGE_KEY, JSON.stringify(newHabits));
+      
+      // Invalida o cache do gráfico para refletir a mudança imediatamente na aba Evolução
+      [7, 15, 30, 90].forEach(range => localStorage.removeItem(`@progress_data_${range}`));
+      
+      // Sincroniza
       syncProgressToDB(newHabits);
+      
       return newHabits;
     });
   };
 
   const getIcon = (name: string, checked: boolean) => {
     const color = checked ? '#FFFFFF' : '#9CA3AF';
-    // Mapeamento de ícones SVG baseados no ID do hábito ou prop icon
     switch (name) {
       case 'barbell': case 'musculacao':
         return <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke={color} strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18M3 18h18M8 6v12M16 6v12M4 6h16M4 18h16" /></svg>;
