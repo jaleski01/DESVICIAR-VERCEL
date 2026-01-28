@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState, useRef } from 'react';
 import { collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
@@ -221,8 +222,9 @@ export const ProgressScreen: React.FC = () => {
 
   // --- RENDER HELPERS ---
   const getBarWidthClass = () => {
-    if (selectedRange <= 15) return "w-8"; 
-    if (selectedRange <= 30) return "w-4"; 
+    if (selectedRange === 7) return "w-8"; 
+    if (selectedRange === 15) return "w-4"; // CORREÇÃO: Reduzido de w-8 para w-4 (15 dias agora é compacto)
+    if (selectedRange === 30) return "w-4"; 
     return "w-3"; 
   };
 
@@ -230,17 +232,11 @@ export const ProgressScreen: React.FC = () => {
     <Wrapper noPadding>
       {/* 
         CONTAINER DE SCROLL VERTICAL (Viewport)
-        flex-1, h-full: Garante que ocupe a altura disponível
-        overflow-y-auto: Habilita o scroll vertical seguro
-        bg-black: Fundo consistente
       */}
       <div className="flex-1 w-full h-full overflow-y-auto scrollbar-hide bg-black">
         
         {/* 
           CONTAINER DE CONTEÚDO
-          w-full: Largura total
-          px-5: Padding horizontal de 20px (Safe Area visual)
-          pb-32: Espaço para o menu inferior
         */}
         <div className="w-full max-w-full px-5 pt-6 pb-32 flex flex-col">
           
@@ -271,7 +267,7 @@ export const ProgressScreen: React.FC = () => {
             ))}
           </div>
 
-          {/* KPI CARDS - Grid Responsivo */}
+          {/* KPI CARDS */}
           <div className="grid grid-cols-2 gap-4 mb-8 w-full">
             <div className="p-4 rounded-xl border border-[#2E243D] bg-[#0F0A15] flex flex-col items-center justify-center relative overflow-hidden w-full">
               <span className="text-[10px] uppercase font-bold text-gray-500 mb-1 z-10">Média</span>
@@ -306,13 +302,13 @@ export const ProgressScreen: React.FC = () => {
                  <p className="text-xs text-gray-400">Complete seus hábitos hoje para ver o D1.</p>
               </div>
             ) : (
-              // Scroll Horizontal contido no pai
+              // Scroll Horizontal condicional: Fixo para 15 e 30 dias para evitar arraste lateral desnecessário
               <div 
                 ref={scrollRef}
-                className="w-full overflow-x-auto pb-4 scrollbar-hide"
+                className={`w-full ${selectedRange === 15 || selectedRange === 30 ? 'overflow-x-hidden' : 'overflow-x-auto'} pb-4 scrollbar-hide`}
               >
                 <div 
-                  className="flex items-end min-w-full gap-3 border-b border-[#2E243D] relative px-2"
+                  className={`flex items-end min-w-full ${selectedRange === 15 || selectedRange === 30 ? 'justify-between px-0' : 'gap-3 px-2'} border-b border-[#2E243D] relative`}
                   style={{ height: '200px' }} 
                 >
                   {/* Background Grid Lines */}
