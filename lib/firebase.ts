@@ -1,11 +1,15 @@
+
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager 
+} from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getMessaging, getToken } from 'firebase/messaging';
 
-// 1. Definição Robusta da Configuração (Env Vars OU Hardcoded)
-// Nota: Usamos o encadeamento opcional para evitar erro se import.meta.env for undefined
+// 1. Definição Robusta da Configuração
 const firebaseConfig = {
   apiKey: (import.meta as any).env?.VITE_FIREBASE_API_KEY || "AIzaSyCOX18n01dJ7XNnwKpk3eZliUJ_ZZ8Uyrw",
   authDomain: (import.meta as any).env?.VITE_FIREBASE_AUTH_DOMAIN || "desafio-60-15.firebaseapp.com",
@@ -16,32 +20,30 @@ const firebaseConfig = {
   measurementId: (import.meta as any).env?.VITE_FIREBASE_MEASUREMENT_ID || "G-SZJ7DMD9NC"
 };
 
-// 2. Debug de Inicialização
-console.log("Firebase Status:", firebaseConfig.apiKey ? "Configurado" : "Erro de Configuração");
-
-// 3. Inicialização
+// 2. Inicialização do Core App
 const app = initializeApp(firebaseConfig);
 
+// 3. Inicialização do Auth e Storage
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
-
-// Firestore com Cache Persistente (Suporte Offline)
-initializeFirestore(app, {
-  localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager()
-  })
-});
-export const db = getFirestore(app);
 export const storage = getStorage(app);
 
-// Tratamento de erro seguro para Messaging
+// 4. Inicialização do Firestore com Persistência Offline Robusta
+// Esta configuração permite que o app funcione offline e sincronize automaticamente.
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager() // Crucial para PWAs: sincroniza dados entre abas
+  })
+});
+
+// 5. Tratamento de Messaging (Seguro para SSR/Ambientes sem SW)
 let messagingInstance: any = null;
 try {
   if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
     messagingInstance = getMessaging(app);
   }
 } catch (e) {
-  console.log('Firebase Messaging não suportado neste ambiente.');
+  console.warn('Firebase Messaging não suportado neste ambiente.');
 }
 export const messaging = messagingInstance;
 
@@ -61,7 +63,6 @@ export const requestForToken = async () => {
       });
 
       if (currentToken) {
-        console.log('Token FCM obtido:', currentToken);
         return currentToken;
       }
     }

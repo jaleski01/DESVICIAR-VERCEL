@@ -1,3 +1,4 @@
+
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -6,16 +7,33 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      // MUDANÇA CRÍTICA: De 'injectManifest' para 'generateSW' para evitar erros de parseAst no Rollup
       registerType: 'autoUpdate', 
       strategies: 'generateSW', 
       
       // Configurações de Cache e Workbox automáticas
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
+        // Padrão agressivo de captura de arquivos para modo offline total
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,json,woff2}'],
         cleanupOutdatedCaches: true,
         clientsClaim: true,
-        skipWaiting: true
+        skipWaiting: true,
+        // Garante que requisições externas para imagens (como as do Imgur) sejam cacheadas se necessário
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/i\.imgur\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'external-media-cache',
+              expiration: {
+                maxEntries: 50,
+                maxAgeSeconds: 60 * 60 * 24 * 30, // 30 dias
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
+        ],
       },
 
       // Opções de Desenvolvimento
