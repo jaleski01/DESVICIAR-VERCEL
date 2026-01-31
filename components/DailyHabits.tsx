@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { COLORS, MASTER_HABITS, UserProfile } from '../types';
-import { fetchAndCacheProgressData } from '../services/progressService';
+import { updateAllProgressCaches } from '../services/progressService';
 
 interface DailyHabitsProps {
   profile: UserProfile | null;
@@ -72,14 +72,12 @@ export const DailyHabits: React.FC<DailyHabitsProps> = ({ profile }) => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(newHabits));
       
       // ATUALIZAÇÃO EM BACKGROUND (ZERO LOADING)
-      // Dispara o recálculo dos gráficos agora mesmo, enquanto o usuário ainda está na Home.
-      // O catch é silencioso pois não queremos travar a UI se der erro no background.
-      Promise.all([
-        fetchAndCacheProgressData(7),
-        fetchAndCacheProgressData(30)
-      ]).catch(err => console.error("Background graph update failed", err));
+      // Otimização: Atualiza TODOS os gráficos (7, 15, 30, 90) com uma única leitura de banco
+      updateAllProgressCaches()
+        .then(() => console.log("[UI-Optimistic] Todos os rituais sincronizados com sucesso."))
+        .catch(err => console.error("Erro na atualização em massa dos rituais:", err));
       
-      // Sincroniza
+      // Sincroniza com o banco remoto
       syncProgressToDB(newHabits);
       
       return newHabits;
