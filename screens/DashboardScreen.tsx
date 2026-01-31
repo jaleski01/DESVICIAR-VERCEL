@@ -194,6 +194,6 @@ export const DashboardScreen: React.FC = () => {
       
       {isTriggerModalOpen && <TriggerModal onClose={() => setIsTriggerModalOpen(false)} />}
       <ShortcutPrompt />
-    </div>
+    </Wrapper>
   );
 };
