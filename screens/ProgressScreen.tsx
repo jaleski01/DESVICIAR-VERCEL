@@ -11,64 +11,75 @@ import {
 } from '../services/progressService';
 
 const RANGES = [7, 15, 30, 90];
-const CACHE_DURATION = 60 * 60 * 1000; // 1 hora de TTL forçado, mas TriggerModal pode invalidar antes
 
 export const ProgressScreen: React.FC = () => {
   const [selectedRange, setSelectedRange] = useState(7);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [stats, setStats] = useState<Stats>({ average: 0, perfectDays: 0 });
   const [triggerInsight, setTriggerInsight] = useState<TriggerInsight | null>(null);
   
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const loadData = async (force = false) => {
+  /**
+   * loadData (Cache-First Logic)
+   * 1. Lê cache local imediatamente.
+   * 2. Se vazio, exibe loading.
+   * 3. Dispara fetch silencioso.
+   * 4. Atualiza UI apenas quando o dado novo chega, mantendo o antigo visível até lá.
+   */
+  const loadData = async () => {
     const cacheKey = `@progress_data_${selectedRange}`;
     const cached = localStorage.getItem(cacheKey);
-    
-    // Tenta carregar do cache primeiro (Imediato)
+    let hasCache = false;
+
+    // ETAPA 1: Carregamento Instantâneo do Cache
     if (cached) {
       try {
-        const { timestamp, data } = JSON.parse(cached) as { timestamp: number, data: ProgressDataPackage };
+        const { data } = JSON.parse(cached) as { data: ProgressDataPackage };
         setChartData(data.chartData);
         setStats(data.stats);
         setTriggerInsight(data.triggerInsight);
-        
-        // Se o cache é novo (menos de 1h), não exibe loading e nem faz novo fetch
-        if (!force && (Date.now() - timestamp < CACHE_DURATION)) {
-          setLoading(false);
-          return;
-        }
+        hasCache = true;
       } catch (e) {
         console.warn("Invalid cache for progress");
       }
     }
 
-    // Se não há cache ou está forçando atualização
-    if (chartData.length === 0) setLoading(true);
-
-    const result = await fetchAndCacheProgressData(selectedRange);
-    if (result) {
-      setChartData(result.chartData);
-      setStats(result.stats);
-      setTriggerInsight(result.triggerInsight);
+    // ETAPA 2: Determinar se precisamos do spinner (apenas se 100% vazio)
+    if (!hasCache) {
+      setLoading(true);
     }
-    setLoading(false);
+
+    // ETAPA 3: Atualização Silenciosa em Background
+    try {
+      const result = await fetchAndCacheProgressData(selectedRange);
+      if (result) {
+        setChartData(result.chartData);
+        setStats(result.stats);
+        setTriggerInsight(result.triggerInsight);
+      }
+    } catch (error) {
+      console.error("Silent background update failed", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     loadData();
   }, [selectedRange]);
 
+  // Mantém o scroll no final do gráfico após carregar
   useEffect(() => {
-    if (!loading && scrollRef.current) {
+    if (!loading && chartData.length > 0 && scrollRef.current) {
       setTimeout(() => {
         if (scrollRef.current) {
           scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
         }
-      }, 100);
+      }, 150);
     }
-  }, [loading, chartData]);
+  }, [loading, chartData, selectedRange]);
 
   const getBarWidthClass = () => {
     if (selectedRange === 7) return "w-8"; 
@@ -110,7 +121,7 @@ export const ProgressScreen: React.FC = () => {
           <div className="grid grid-cols-2 gap-4 mb-8 w-full">
             <div className="p-4 rounded-xl border border-[#2E243D] bg-[#0F0A15] flex flex-col items-center justify-center relative overflow-hidden w-full">
               <span className="text-[10px] uppercase font-bold text-gray-500 mb-1 z-10">Média</span>
-              <span className={`text-3xl font-bold z-10 ${stats.average >= 80 ? 'text-[#10B981]' : 'text-white'}`}>
+              <span className={`text-3xl font-bold z-10 transition-colors duration-500 ${stats.average >= 80 ? 'text-[#10B981]' : 'text-white'}`}>
                 {stats.average}%
               </span>
               <div className="absolute -bottom-4 -right-4 w-16 h-16 bg-[#8B5CF6]/10 rounded-full blur-xl"></div>
@@ -130,14 +141,14 @@ export const ProgressScreen: React.FC = () => {
               Linha do Tempo
             </h3>
 
-            {loading && chartData.length === 0 ? (
+            {loading ? (
                <div className="w-full h-[200px] flex items-center justify-center">
                   <div className="w-8 h-8 border-4 border-[#8B5CF6] border-t-transparent rounded-full animate-spin"></div>
                </div>
             ) : chartData.length === 0 ? (
               <div className="w-full h-[200px] flex flex-col items-center justify-center text-center opacity-50 border border-dashed border-gray-800 rounded-xl">
                  <p className="text-sm font-bold text-white mb-2">Jornada Iniciada</p>
-                 <p className="text-xs text-gray-400">Complete seus hábitos hoje para ver o D1.</p>
+                 <p className="text-xs text-gray-400">Complete seus rituais hoje para gerar dados.</p>
               </div>
             ) : (
               <div 
@@ -145,10 +156,9 @@ export const ProgressScreen: React.FC = () => {
                 className={`w-full ${selectedRange === 15 || selectedRange === 30 ? 'overflow-x-hidden' : 'overflow-x-auto'} pb-4 scrollbar-hide`}
               >
                 <div 
-                  className={`flex items-end min-w-full ${selectedRange === 15 || selectedRange === 30 ? 'justify-between px-0' : 'gap-3 px-2'} border-b border-[#2E243D] relative`}
+                  className={`flex items-end min-w-full ${selectedRange === 15 || selectedRange === 30 ? 'justify-between px-0' : 'gap-3 px-2'} border-b border-[#2E243D] relative transition-opacity duration-300`}
                   style={{ height: '200px' }} 
                 >
-                  {/* Grid Lines */}
                   <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-5 w-full h-full z-0">
                     <div className="w-full h-px bg-white"></div>
                     <div className="w-full h-px bg-white"></div>
@@ -161,10 +171,10 @@ export const ProgressScreen: React.FC = () => {
                     const barHeight = `${item.value}%`; 
                     
                     return (
-                      <div key={index} className="flex flex-col items-center gap-2 group cursor-pointer z-10 h-full justify-end flex-shrink-0">
+                      <div key={`${selectedRange}-${index}`} className="flex flex-col items-center gap-2 group cursor-pointer z-10 h-full justify-end flex-shrink-0">
                         <div className="relative flex items-end h-full w-full justify-center">
                           <div 
-                            className={`rounded-t-sm transition-all duration-500 ease-out relative ${getBarWidthClass()}`}
+                            className={`rounded-t-sm transition-all duration-700 ease-out relative ${getBarWidthClass()}`}
                             style={{ 
                               height: hasData ? barHeight : '4px',
                               backgroundColor: hasData ? COLORS.Primary : '#1F2937',
@@ -199,7 +209,7 @@ export const ProgressScreen: React.FC = () => {
             </div>
 
             {triggerInsight && triggerInsight.totalLogs > 0 ? (
-              <div className="flex flex-col gap-4 w-full">
+              <div className="flex flex-col gap-4 w-full animate-fadeIn">
                 <div className="p-5 rounded-2xl bg-gradient-to-br from-[#1F1212] to-[#000000] border border-red-900/30 relative overflow-hidden w-full">
                   <div className="absolute top-0 right-0 p-3 opacity-10">
                     <svg className="w-24 h-24 text-red-600" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
@@ -215,7 +225,7 @@ export const ProgressScreen: React.FC = () => {
                 </div>
 
                 <div className="bg-[#0F0A15] rounded-xl border border-[#2E243D] p-4 w-full">
-                  <h5 className="text-[10px] uppercase text-gray-500 font-bold mb-3">Top Gatilhos Recorrentes</h5>
+                  <h5 className="text-[10px] uppercase text-gray-500 font-bold mb-3">Ranking de Recorrência</h5>
                   <div className="flex flex-col gap-3 w-full">
                     {triggerInsight.ranking.map((item, idx) => (
                       <div key={item.name} className="flex items-center justify-between w-full">
@@ -234,7 +244,7 @@ export const ProgressScreen: React.FC = () => {
             ) : (
               <div className="w-full p-6 rounded-xl border border-dashed border-[#2E243D] flex flex-col items-center justify-center text-center">
                 <p className="text-sm text-gray-400 mb-1">Nenhum gatilho registrado.</p>
-                <p className="text-xs text-gray-600">Use o botão "Registrar Gatilho" na Home quando sentir vontade.</p>
+                <p className="text-xs text-gray-600">Use o botão "Registrar Gatilho" na Home.</p>
               </div>
             )}
           </div>

@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { COLORS, MASTER_HABITS, UserProfile } from '../types';
+import { fetchAndCacheProgressData } from '../services/progressService';
 
 interface DailyHabitsProps {
   profile: UserProfile | null;
@@ -70,8 +71,13 @@ export const DailyHabits: React.FC<DailyHabitsProps> = ({ profile }) => {
       // Salva localmente
       localStorage.setItem(STORAGE_KEY, JSON.stringify(newHabits));
       
-      // Invalida o cache do gráfico para refletir a mudança imediatamente na aba Evolução
-      [7, 15, 30, 90].forEach(range => localStorage.removeItem(`@progress_data_${range}`));
+      // ATUALIZAÇÃO EM BACKGROUND (ZERO LOADING)
+      // Dispara o recálculo dos gráficos agora mesmo, enquanto o usuário ainda está na Home.
+      // O catch é silencioso pois não queremos travar a UI se der erro no background.
+      Promise.all([
+        fetchAndCacheProgressData(7),
+        fetchAndCacheProgressData(30)
+      ]).catch(err => console.error("Background graph update failed", err));
       
       // Sincroniza
       syncProgressToDB(newHabits);
