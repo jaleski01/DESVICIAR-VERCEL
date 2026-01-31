@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore'; 
@@ -122,13 +121,17 @@ export const LoginScreen: React.FC = () => {
       if (userDocSnap.exists()) {
         const userData = userDocSnap.data();
 
-        // TRAVA DE SEGURANÇA (PAYWALL)
-        if (userData?.subscription_status !== 'active') {
+        // TRAVA DE SEGURANÇA (PAYWALL) - Lógica Permissiva
+        const status = userData?.subscription_status;
+        const blockedStatuses = ['canceled', 'unpaid', 'past_due'];
+
+        if (status && blockedStatuses.includes(status)) {
           await signOut(auth);
-          setError("Sua assinatura não está ativa. Verifique seu pagamento.");
+          setError("Sua assinatura não está ativa. Status: " + status);
           setIsLoading(false);
           return;
         }
+        // Se for 'active', 'trialing' ou undefined -> Deixa passar
 
         if (userData?.onboarding_completed) {
           navigate(Routes.DASHBOARD);

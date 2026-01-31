@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -75,43 +74,38 @@ const App: React.FC = () => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       try {
         if (currentUser) {
-          // Busca o documento do usuário para validar o status da assinatura
           const userDocRef = doc(db, "users", currentUser.uid);
           const userDocSnap = await getDoc(userDocRef);
 
           if (userDocSnap.exists()) {
             const userData = userDocSnap.data();
+            const status = userData?.subscription_status;
 
-            // BLOQUEIO DE SEGURANÇA (PAYWALL):
-            if (userData?.subscription_status !== 'active') {
-              console.warn("[AuthGuard] Assinatura inativa ou pendente.");
-              
-              // Persiste o erro para a LoginScreen capturar no useEffect
-              sessionStorage.setItem('loginError', 'Sua assinatura não está ativa. Verifique seu pagamento.');
-              
-              // Executa o logout no Firebase
+            // STATUS BLOQUEADORES (Blacklist em vez de Whitelist)
+            // Isso evita bloquear usuários novos ou em processamento
+            const blockedStatuses = ['canceled', 'unpaid', 'past_due'];
+
+            if (status && blockedStatuses.includes(status)) {
+              console.warn(`[AuthGuard] Bloqueio por status: ${status}`);
+              sessionStorage.setItem('loginError', 'Sua assinatura expirou ou está pendente.');
               await signOut(auth);
-              
-              // Limpa o estado local
               setUser(null);
             } else {
-              // Assinatura Ativa: Libera acesso
+              // Permite acesso para 'active', 'trialing' ou 'undefined' (novo)
               setUser(currentUser);
             }
           } else {
-            // Documento não existe: Novo usuário, permite seguir para Onboarding
+            // Novo usuário (sem doc ainda) -> Permite
             setUser(currentUser);
           }
         } else {
-          // Sem usuário logado
           setUser(null);
         }
       } catch (error) {
-        console.error("[AuthGuard] Erro crítico na validação:", error);
-        setUser(null);
+        console.error("[AuthGuard] Erro não-bloqueante:", error);
+        // Em caso de erro de rede, NÃO desloga o usuário (Fail Open)
+        setUser(currentUser); 
       } finally {
-        // GARANTIA: Independente do resultado (sucesso, erro ou bloqueio),
-        // paramos o loading para evitar o spinner infinito.
         setLoading(false);
       }
     });

@@ -26,32 +26,44 @@ export const TriggerModal: React.FC<TriggerModalProps> = ({ onClose }) => {
   const [emotion, setEmotion] = useState<string | null>(null);
   const [context, setContext] = useState<string | null>(null);
   const [intensity, setIntensity] = useState(3);
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleNext = () => {
     if (step < 3) setStep(step + 1);
   };
 
-  const handleSubmit = async () => {
-    if (!auth.currentUser || !emotion || !context) return;
+  /**
+   * HANDLER OPTIMISTIC (LATÊNCIA ZERO)
+   * Fecha o modal imediatamente e processa a persistência em background.
+   */
+  const handleSubmit = () => {
+    const user = auth.currentUser;
+    if (!user || !emotion || !context) return;
     
-    setIsSubmitting(true);
-    try {
-      await logTrigger(auth.currentUser.uid, emotion, context, intensity);
-      
-      // FIRE-AND-FORGET: Atualiza o cache de progresso em background
-      // O usuário não espera por isso, mas os dados estarão prontos quando ele abrir a aba Evolução.
-      Promise.all([
-        fetchAndCacheProgressData(7),
-        fetchAndCacheProgressData(30)
-      ]).catch(e => console.warn("Background cache sync failed:", e));
+    // 1. Snapshot dos dados para o background process
+    const triggerData = {
+      uid: user.uid,
+      emotion: emotion,
+      context: context,
+      intensity: intensity
+    };
 
-      onClose();
-    } catch (error) {
-      console.error("Error logging trigger:", error);
-      alert("Erro ao salvar. Tente novamente.");
-      setIsSubmitting(false);
-    }
+    // 2. UI Otimista: Fecha o modal na cara do usuário para feedback instantâneo
+    onClose();
+
+    // 3. Processamento em Background (Fire-and-Forget)
+    // Graças à persistência do Firebase, isso funciona mesmo offline.
+    logTrigger(triggerData.uid, triggerData.emotion, triggerData.context, triggerData.intensity)
+      .then(() => {
+        // Atualiza os caches de progresso para que a aba Evolução esteja pronta
+        return Promise.all([
+          fetchAndCacheProgressData(7),
+          fetchAndCacheProgressData(30)
+        ]);
+      })
+      .catch((error) => {
+        // Log silencioso: O Firebase tentará sincronizar novamente se for erro de rede.
+        console.error("Background trigger sync failed:", error);
+      });
   };
 
   const renderStepContent = () => {
@@ -176,7 +188,6 @@ export const TriggerModal: React.FC<TriggerModalProps> = ({ onClose }) => {
           ) : (
             <Button 
               onClick={handleSubmit} 
-              isLoading={isSubmitting}
               className="bg-red-600 hover:bg-red-700 border-none"
             >
               Registrar e Seguir Forte
