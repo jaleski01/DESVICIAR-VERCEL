@@ -1,5 +1,7 @@
+
 import React, { useState } from 'react';
 import { logTrigger } from '../services/triggerService';
+import { fetchAndCacheProgressData } from '../services/progressService';
 import { auth } from '../lib/firebase';
 import { COLORS } from '../types';
 import { Button } from './Button';
@@ -36,7 +38,14 @@ export const TriggerModal: React.FC<TriggerModalProps> = ({ onClose }) => {
     setIsSubmitting(true);
     try {
       await logTrigger(auth.currentUser.uid, emotion, context, intensity);
-      // Small delay for visual feedback if needed, then close
+      
+      // FIRE-AND-FORGET: Atualiza o cache de progresso em background
+      // O usuário não espera por isso, mas os dados estarão prontos quando ele abrir a aba Evolução.
+      Promise.all([
+        fetchAndCacheProgressData(7),
+        fetchAndCacheProgressData(30)
+      ]).catch(e => console.warn("Background cache sync failed:", e));
+
       onClose();
     } catch (error) {
       console.error("Error logging trigger:", error);
@@ -126,20 +135,16 @@ export const TriggerModal: React.FC<TriggerModalProps> = ({ onClose }) => {
   };
 
   return (
-    // FIX: Z-Index 9999 ensures it's above everything. items-center ensures perfect centering.
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-      {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-black/90 backdrop-blur-sm"
         onClick={onClose}
       />
 
-      {/* Modal Card */}
       <div 
         className="w-full max-w-sm bg-[#0F0A15] border border-[#2E243D] rounded-2xl shadow-2xl relative overflow-hidden flex flex-col"
         style={{ maxHeight: '85vh' }}
       >
-        {/* Progress Bar */}
         <div className="w-full h-1 bg-[#2E243D]">
           <div 
             className="h-full bg-violet-500 transition-all duration-300"
@@ -147,7 +152,6 @@ export const TriggerModal: React.FC<TriggerModalProps> = ({ onClose }) => {
           />
         </div>
 
-        {/* Close Button */}
         <button 
           onClick={onClose}
           className="absolute top-3 right-3 text-gray-500 hover:text-white z-10"

@@ -1,231 +1,63 @@
 
 import React, { useEffect, useState, useRef } from 'react';
-import { collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '../lib/firebase';
-import { getTriggers, TriggerLog } from '../services/triggerService';
 import { Wrapper } from '../components/Wrapper';
 import { COLORS } from '../types';
-
-// Data Types
-interface DailyHistory {
-  date: string;
-  percentage: number;
-  completed_count?: number; 
-  total_habits?: number;    
-}
-
-interface ChartDataPoint {
-  label: string;      
-  fullDate: string;   
-  value: number;      
-  count: number;      
-  dayNumber: number;  
-}
-
-interface Stats {
-  average: number;
-  perfectDays: number;
-}
-
-interface TriggerInsight {
-  totalLogs: number;
-  topEmotion: { name: string; count: number; percentage: number } | null;
-  topContext: { name: string; count: number; percentage: number } | null;
-  ranking: { name: string; count: number }[];
-}
+import { 
+  fetchAndCacheProgressData, 
+  ProgressDataPackage, 
+  ChartDataPoint, 
+  Stats, 
+  TriggerInsight 
+} from '../services/progressService';
 
 const RANGES = [7, 15, 30, 90];
-const CACHE_DURATION = 60 * 60 * 1000; // 60 minutos
+const CACHE_DURATION = 60 * 60 * 1000; // 1 hora de TTL forçado, mas TriggerModal pode invalidar antes
 
 export const ProgressScreen: React.FC = () => {
   const [selectedRange, setSelectedRange] = useState(7);
   const [loading, setLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [stats, setStats] = useState<Stats>({ average: 0, perfectDays: 0 });
   const [triggerInsight, setTriggerInsight] = useState<TriggerInsight | null>(null);
   
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const formatDateKey = (date: Date) => {
-    return date.toLocaleDateString('en-CA');
-  };
-
-  const fetchData = async (force = false) => {
-    const user = auth.currentUser;
-    if (!user) return;
-    
+  const loadData = async (force = false) => {
     const cacheKey = `@progress_data_${selectedRange}`;
+    const cached = localStorage.getItem(cacheKey);
     
-    // 1. Verificação de Cache
-    if (!force) {
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        try {
-          const { timestamp, data } = JSON.parse(cached);
-          if (Date.now() - timestamp < CACHE_DURATION) {
-            setChartData(data.chartData);
-            setStats(data.stats);
-            setTriggerInsight(data.triggerInsight);
-            setLoading(false);
-            return;
-          }
-        } catch (e) {
-          console.error("Cache corrupted:", e);
+    // Tenta carregar do cache primeiro (Imediato)
+    if (cached) {
+      try {
+        const { timestamp, data } = JSON.parse(cached) as { timestamp: number, data: ProgressDataPackage };
+        setChartData(data.chartData);
+        setStats(data.stats);
+        setTriggerInsight(data.triggerInsight);
+        
+        // Se o cache é novo (menos de 1h), não exibe loading e nem faz novo fetch
+        if (!force && (Date.now() - timestamp < CACHE_DURATION)) {
+          setLoading(false);
+          return;
         }
+      } catch (e) {
+        console.warn("Invalid cache for progress");
       }
     }
 
-    setLoading(true);
-    if (force) setIsRefreshing(true);
+    // Se não há cache ou está forçando atualização
+    if (chartData.length === 0) setLoading(true);
 
-    try {
-      const userDocRef = doc(db, "users", user.uid);
-      const userDocSnap = await getDoc(userDocRef);
-      
-      let startDate = new Date();
-      if (userDocSnap.exists()) {
-        const userData = userDocSnap.data();
-        if (userData.current_streak_start) {
-          startDate = new Date(userData.current_streak_start);
-        }
-      }
-      startDate.setHours(0, 0, 0, 0);
-
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const queryStartDate = new Date(today);
-      queryStartDate.setDate(today.getDate() - (selectedRange - 1));
-      const queryStartDateStr = formatDateKey(queryStartDate);
-
-      const historyPromise = fetchHistory(user.uid, queryStartDateStr, startDate, today);
-      const triggersPromise = getTriggers(user.uid, queryStartDateStr);
-
-      const [historyResults, triggerLogs] = await Promise.all([historyPromise, triggersPromise]);
-      const processedInsights = processTriggerInsights(triggerLogs);
-
-      // Atualiza Estados
-      setChartData(historyResults.processedData);
-      setStats(historyResults.newStats);
-      setTriggerInsight(processedInsights);
-
-      // 2. Grava no Cache
-      const cachePayload = {
-        timestamp: Date.now(),
-        data: {
-          chartData: historyResults.processedData,
-          stats: historyResults.newStats,
-          triggerInsight: processedInsights
-        }
-      };
-      localStorage.setItem(cacheKey, JSON.stringify(cachePayload));
-
-    } catch (error) {
-      console.error("Error fetching progress data:", error);
-    } finally {
-      setLoading(false);
-      setIsRefreshing(false);
+    const result = await fetchAndCacheProgressData(selectedRange);
+    if (result) {
+      setChartData(result.chartData);
+      setStats(result.stats);
+      setTriggerInsight(result.triggerInsight);
     }
-  };
-
-  const fetchHistory = async (uid: string, queryStartDateStr: string, streakStartDate: Date, today: Date) => {
-    const historyRef = collection(db, "users", uid, "daily_history");
-    const q = query(
-      historyRef, 
-      where("date", ">=", queryStartDateStr),
-      orderBy("date", "desc")
-    );
-
-    const querySnapshot = await getDocs(q);
-    const historyMap = new Map<string, DailyHistory>();
-
-    querySnapshot.forEach((doc) => {
-      const data = doc.data() as DailyHistory;
-      historyMap.set(data.date, data);
-    });
-
-    const processedData: ChartDataPoint[] = [];
-    let totalPercentage = 0;
-    let perfectCount = 0;
-    let validDaysCount = 0;
-
-    for (let i = selectedRange - 1; i >= 0; i--) {
-      const targetDate = new Date(today);
-      targetDate.setDate(today.getDate() - i);
-      targetDate.setHours(0, 0, 0, 0);
-      
-      const dateKey = formatDateKey(targetDate);
-      const diffTime = targetDate.getTime() - streakStartDate.getTime();
-      const dayNumber = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-
-      if (dayNumber < 1) continue; 
-
-      const record = historyMap.get(dateKey);
-      const count = record?.completed_count ?? 0;
-      const totalTasks = record?.total_habits || 6; 
-      const rawPercentage = (count / totalTasks) * 100;
-      const value = Math.min(Math.round(rawPercentage), 100);
-
-      totalPercentage += value;
-      if (value === 100) perfectCount++;
-      validDaysCount++;
-
-      processedData.push({
-        label: `D${dayNumber}`,
-        fullDate: dateKey,
-        value: value,
-        count: count,
-        dayNumber: dayNumber
-      });
-    }
-
-    return {
-      processedData,
-      newStats: {
-        average: validDaysCount > 0 ? Math.round(totalPercentage / validDaysCount) : 0,
-        perfectDays: perfectCount
-      }
-    };
-  };
-
-  const processTriggerInsights = (logs: TriggerLog[]): TriggerInsight => {
-    if (logs.length === 0) {
-      return { totalLogs: 0, topEmotion: null, topContext: null, ranking: [] };
-    }
-
-    const emotionCounts: Record<string, number> = {};
-    const contextCounts: Record<string, number> = {};
-    
-    logs.forEach(log => {
-      emotionCounts[log.emotion] = (emotionCounts[log.emotion] || 0) + 1;
-      contextCounts[log.context] = (contextCounts[log.context] || 0) + 1;
-    });
-
-    let maxEmotion = { name: '', count: 0 };
-    Object.entries(emotionCounts).forEach(([name, count]) => {
-      if (count > maxEmotion.count) maxEmotion = { name, count };
-    });
-
-    let maxContext = { name: '', count: 0 };
-    Object.entries(contextCounts).forEach(([name, count]) => {
-      if (count > maxContext.count) maxContext = { name, count };
-    });
-
-    const ranking = Object.entries(emotionCounts)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 3);
-
-    return {
-      totalLogs: logs.length,
-      topEmotion: { ...maxEmotion, percentage: Math.round((maxEmotion.count / logs.length) * 100) },
-      topContext: { ...maxContext, percentage: Math.round((maxContext.count / logs.length) * 100) },
-      ranking
-    };
+    setLoading(false);
   };
 
   useEffect(() => {
-    fetchData();
+    loadData();
   }, [selectedRange]);
 
   useEffect(() => {
@@ -298,7 +130,7 @@ export const ProgressScreen: React.FC = () => {
               Linha do Tempo
             </h3>
 
-            {loading ? (
+            {loading && chartData.length === 0 ? (
                <div className="w-full h-[200px] flex items-center justify-center">
                   <div className="w-8 h-8 border-4 border-[#8B5CF6] border-t-transparent rounded-full animate-spin"></div>
                </div>
@@ -316,7 +148,8 @@ export const ProgressScreen: React.FC = () => {
                   className={`flex items-end min-w-full ${selectedRange === 15 || selectedRange === 30 ? 'justify-between px-0' : 'gap-3 px-2'} border-b border-[#2E243D] relative`}
                   style={{ height: '200px' }} 
                 >
-                  <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-10 w-full h-full z-0">
+                  {/* Grid Lines */}
+                  <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-5 w-full h-full z-0">
                     <div className="w-full h-px bg-white"></div>
                     <div className="w-full h-px bg-white"></div>
                     <div className="w-full h-px bg-white"></div>
@@ -365,7 +198,7 @@ export const ProgressScreen: React.FC = () => {
               </h3>
             </div>
 
-            {!loading && triggerInsight && triggerInsight.totalLogs > 0 ? (
+            {triggerInsight && triggerInsight.totalLogs > 0 ? (
               <div className="flex flex-col gap-4 w-full">
                 <div className="p-5 rounded-2xl bg-gradient-to-br from-[#1F1212] to-[#000000] border border-red-900/30 relative overflow-hidden w-full">
                   <div className="absolute top-0 right-0 p-3 opacity-10">
