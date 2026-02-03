@@ -37,16 +37,12 @@ export const TabLayout: React.FC = () => {
       {/* 
         HUB / MENU INFERIOR:
         Posicionado absolutamente na base.
-        Backdrop-blur para efeito moderno.
+        Glassmorphism: bg-zinc-900/80 + backdrop-blur-md + border-white/10
       */}
       <div 
-        className="absolute bottom-0 left-0 w-full z-50 border-t pb-safe"
+        className="absolute bottom-0 left-0 w-full z-50 border-t pb-safe bg-zinc-900/80 backdrop-blur-md border-white/10"
         style={{ 
           height: '80px', // Altura fixa para o Hub
-          backgroundColor: 'rgba(11, 16, 26, 0.95)', // Surface com transparência
-          borderColor: COLORS.Border,
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)'
         }}
       >
         <div className="flex justify-around items-center h-full px-2 pb-2">
