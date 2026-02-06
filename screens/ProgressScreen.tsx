@@ -23,17 +23,12 @@ export const ProgressScreen: React.FC = () => {
 
   /**
    * loadData (Cache-First Logic)
-   * 1. Lê cache local imediatamente.
-   * 2. Se vazio, exibe loading.
-   * 3. Dispara fetch silencioso.
-   * 4. Atualiza UI apenas quando o dado novo chega, mantendo o antigo visível até lá.
    */
   const loadData = async () => {
     const cacheKey = `@progress_data_${selectedRange}`;
     const cached = localStorage.getItem(cacheKey);
     let hasCache = false;
 
-    // ETAPA 1: Carregamento Instantâneo do Cache
     if (cached) {
       try {
         const { data } = JSON.parse(cached) as { data: ProgressDataPackage };
@@ -46,12 +41,10 @@ export const ProgressScreen: React.FC = () => {
       }
     }
 
-    // ETAPA 2: Determinar se precisamos do spinner (apenas se 100% vazio)
     if (!hasCache) {
       setLoading(true);
     }
 
-    // ETAPA 3: Atualização Silenciosa em Background
     try {
       const result = await fetchAndCacheProgressData(selectedRange);
       if (result) {
@@ -70,7 +63,6 @@ export const ProgressScreen: React.FC = () => {
     loadData();
   }, [selectedRange]);
 
-  // Mantém o scroll no final do gráfico após carregar
   useEffect(() => {
     if (!loading && chartData.length > 0 && scrollRef.current) {
       setTimeout(() => {
@@ -81,11 +73,13 @@ export const ProgressScreen: React.FC = () => {
     }
   }, [loading, chartData, selectedRange]);
 
+  /**
+   * 1. Padronização da Largura das Barras
+   * 7 dias = w-8 | 15, 30, 90 dias = w-4
+   */
   const getBarWidthClass = () => {
     if (selectedRange === 7) return "w-8"; 
-    if (selectedRange === 15) return "w-4";
-    if (selectedRange === 30) return "w-4"; 
-    return "w-3"; 
+    return "w-4"; 
   };
 
   return (
@@ -151,12 +145,16 @@ export const ProgressScreen: React.FC = () => {
                  <p className="text-xs text-gray-400">Complete seus rituais hoje para gerar dados.</p>
               </div>
             ) : (
+              /**
+               * 2. Lógica de Layout e Rolagem
+               * Apenas 7 e 15 dias são estáticos. 30 e 90 dias ativam scroll horizontal.
+               */
               <div 
                 ref={scrollRef}
-                className={`w-full ${selectedRange === 15 || selectedRange === 30 ? 'overflow-x-hidden' : 'overflow-x-auto'} pb-4 scrollbar-hide`}
+                className={`w-full ${selectedRange === 7 || selectedRange === 15 ? 'overflow-x-hidden' : 'overflow-x-auto'} pb-4 scrollbar-hide`}
               >
                 <div 
-                  className={`flex items-end min-w-full ${selectedRange === 15 || selectedRange === 30 ? 'justify-between px-0' : 'gap-3 px-2'} border-b border-[#2E243D] relative transition-opacity duration-300`}
+                  className={`flex items-end min-w-full ${selectedRange === 7 || selectedRange === 15 ? 'justify-between px-0' : 'gap-3 px-2'} border-b border-[#2E243D] relative transition-opacity duration-300`}
                   style={{ height: '200px' }} 
                 >
                   <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-5 w-full h-full z-0">
